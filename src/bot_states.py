@@ -1,0 +1,3 @@
+(
+    CHECK
+) = range(1)
