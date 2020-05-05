@@ -1,9 +1,3 @@
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackQueryHandler
-import src.bot_states as bot_states
-import src.bot_messages as bot_messages
-import telegram
-import logging
-
 import torch
 import numpy as np
 from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
@@ -13,8 +7,6 @@ from pytorch_pretrained_bert import BertForSequenceClassification
 from hunspell import Hunspell
 from difflib import SequenceMatcher
 import en_core_web_sm
-
-### ML BEGINNING
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # TODO decomment
@@ -186,7 +178,6 @@ org_text = []
 # org_text.append("Giant otters is an apex predator .")
 # org_text.append('There is no a doubt, tracking system has brought many benefits in this information age .')
 org_text.append('I buy a book yesterday .')
-
 
 def create_spelling_set(org_text):
     """ Create a set of sentences which have possible corrected spellings
@@ -423,53 +414,22 @@ def check_grammar(org_sent, sentences, spelling_sentences):
     return spelling_sentences
 
 
-print('ML INITIALIZED')
-### ML ENDING
+for sent in org_text:
+    print("Input Sentence >>> " + sent)
 
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-custom_keyboard = [['/check']]
-admin_keyboard = [['/check'], ['/admin_panel']]
-
-client_keyboard = [['/check'], ['/makeorder'], ['/back']]
-
-standart_markup = telegram.ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=True)
-admin_markup = telegram.ReplyKeyboardMarkup(admin_keyboard, resize_keyboard=True)
-client_markup = telegram.ReplyKeyboardMarkup(client_keyboard, resize_keyboard=True)
-
-
-def start(update, context):
-    update.message.reply_text(bot_messages.start_command_response, reply_markup=standart_markup)
-
-
-def check(update, context):
-    context.bot.send_message(chat_id=update.message.chat_id, text=bot_messages.client_response)
-
-    return bot_states.CHECK
-
-
-def ml_part(update, context):
-    text = update.message.text
-    print('INPUT: ' + text)
-
-    sentences = create_spelling_set(text)
+    sentences = create_spelling_set(sent)
     spelling_sentences = create_grammar_set(sentences)
     sentences = create_mask_set(spelling_sentences)
 
     print("processing {0} possibilities".format(len(sentences)))
 
-    sentences = check_grammar(text, sentences, spelling_sentences)
+    sentences = check_grammar(sent, sentences, spelling_sentences)
 
     print("Suggestions & Probabilities")
 
-    possible_corrections = "POSSIBLE CORRECTIONS:"
-
     if len(sentences) == 0:
-        print('NONE')
-        context.bot.send_message(chat_id=update.message.chat_id, text=possible_corrections)
-        return
+        print("None")
+        continue
 
     no_error, prob_val = check_GE(sentences)
 
@@ -477,44 +437,7 @@ def ml_part(update, context):
         exps = [np.exp(i) for i in prob_val[i]]
         sum_of_exps = sum(exps)
         softmax = [j / sum_of_exps for j in exps]
-        possible_corrections += "\n\n[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[i])
-        print("[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[i]))
+        print("{0} - {1:0.4f}%".format(sentences[i], softmax[1] * 100))
 
     print("-" * 60)
     print()
-    context.bot.send_message(chat_id=update.message.chat_id, text=possible_corrections + "\n")
-
-
-# FOR DEBUGING
-def ping(update, context):
-    print("context")
-    print(type(context))
-    print("update")
-    print(update)
-
-
-token = '1121924754:AAHw1itwq4GWWVSsq_mPMTnTqxQ-8ZRnwlE'
-updater = Updater(token, use_context=True)
-dp = updater.dispatcher
-
-
-def main():
-    dp.add_handler(CommandHandler('start', start))
-    dp.add_handler(CommandHandler('ping', ping))  # TODO
-    check_handler = ConversationHandler(
-        entry_points=[CommandHandler('check', check)],
-
-        states={
-            bot_states.CHECK: [MessageHandler(Filters.text, ml_part)]
-        },
-
-        fallbacks=[CommandHandler('start', start)]
-    )
-    dp.add_handler(check_handler)
-
-    updater.start_polling()
-    updater.idle()
-
-
-if __name__ == '__main__':
-    main()
