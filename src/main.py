@@ -21,7 +21,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # n_gpu = torch.cuda.device_count()
 # print(torch.get_device_name(0))
 
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+tokenizer = BertTokenizer.from_pretrained('bert-large-uncased')
 
 
 def check_GE(sents):
@@ -439,6 +439,8 @@ standart_markup = telegram.ReplyKeyboardMarkup(custom_keyboard, resize_keyboard=
 admin_markup = telegram.ReplyKeyboardMarkup(admin_keyboard, resize_keyboard=True)
 client_markup = telegram.ReplyKeyboardMarkup(client_keyboard, resize_keyboard=True)
 
+def first_letter_upper(s):
+    return s[0].upper() + s[1:]
 
 def start(update, context):
     update.message.reply_text(bot_messages.start_command_response, reply_markup=standart_markup)
@@ -454,36 +456,74 @@ def ml_part(update, context):
     text = update.message.text
     print('INPUT: ' + text)
 
-    sentences = create_spelling_set(text)
-    spelling_sentences = create_grammar_set(sentences)
-    sentences = create_mask_set(spelling_sentences)
+    input_sentences = []
+    current_sentence = ''
+    delimiters = []
 
-    print("processing {0} possibilities".format(len(sentences)))
+    for c in text:
+        if c in ['.', '!', '?']:
+            input_sentences.append(current_sentence)
+            delimiters.append(c)
+            current_sentence = ''
+        else:
+            current_sentence += c
 
-    sentences = check_grammar(text, sentences, spelling_sentences)
+    if len(current_sentence) > 0:
+        input_sentences.append(current_sentence)
+        delimiters.append('.')
 
-    print("Suggestions & Probabilities")
+    corrected_text = ''
 
-    possible_corrections = "POSSIBLE CORRECTIONS:"
+    for i in range(len(input_sentences)):
+        sentence_to_correct = input_sentences[i]
 
-    if len(sentences) == 0:
-        print('NONE')
-        context.bot.send_message(chat_id=update.message.chat_id, text=possible_corrections)
-        return
+        sentences = create_spelling_set(sentence_to_correct)
+        spelling_sentences = create_grammar_set(sentences)
+        sentences = create_mask_set(spelling_sentences)
 
-    no_error, prob_val = check_GE(sentences)
+        print("processing {0} possibilities".format(len(sentences)))
 
-    for i in range(len(prob_val)):
-        exps = [np.exp(i) for i in prob_val[i]]
-        sum_of_exps = sum(exps)
-        softmax = [j / sum_of_exps for j in exps]
-        possible_corrections += "\n\n[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[i])
-        print("[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[i]))
+        sentences = check_grammar(sentence_to_correct, sentences, spelling_sentences)
 
-    print("-" * 60)
-    print()
-    context.bot.send_message(chat_id=update.message.chat_id, text=possible_corrections + "\n")
+        print("Suggestions & Probabilities")
 
+        possible_corrections = "POSSIBLE CORRECTIONS:"
+
+        if len(sentences) == 0:
+            words = sentence_to_correct.split()
+            words[0] = first_letter_upper(words[0])
+            sentence_to_correct = ' '.join(words)
+            if len(corrected_text) > 0:
+                corrected_text += ' '
+            corrected_text += sentence_to_correct + delimiters[i]
+            continue
+
+        no_error, prob_val = check_GE(sentences)
+
+        best_match = None
+        best_match_prob = 0.0
+
+        for j in range(len(prob_val)):
+            exps = [np.exp(k) for k in prob_val[j]]
+            sum_of_exps = sum(exps)
+            softmax = [k / sum_of_exps for k in exps]
+            possible_corrections += "\n\n[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[j])
+            probability = softmax[1]
+            if probability > best_match_prob:
+                best_match = sentences[j]
+                best_match_prob = probability
+            print("[{0:0.4f}] {1}".format(softmax[1] * 100, sentences[j]))
+
+        if len(corrected_text) > 0:
+            corrected_text += ' '
+
+        best_match = first_letter_upper(best_match)
+        corrected_text += best_match + delimiters[i]
+
+    print('INPUT MESSAGE: {}\nCORRECTED_MESSAGE: {}\n'.format(text, corrected_text))
+    context.bot.send_message(chat_id=update.message.chat_id, text=corrected_text)
+
+    return ConversationHandler.END
 
 # FOR DEBUGING
 def ping(update, context):
