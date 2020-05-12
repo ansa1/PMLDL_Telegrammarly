@@ -25,37 +25,19 @@ def check_GE(sents):
     """
 
     # Create sentence and label lists
-    # We need to add special tokens at the beginning and end of each sentence
-    # for BERT to work properly
-
     sentences = ["[CLS] " + sentence + " [SEP]" for sentence in sents]
-    labels = [0]
 
-    tokenized_texts = [tokenizer.tokenize(sent) for sent in sentences]
+    tokenized_texts = [tokenizer.tokenize(sentence) for sentence in sentences]
 
-    # Padding Sentences
-    # Set the maximum sequence length. The longest sequence in our training set
-    # is 47, but we'll leave room on the end anyway.
-    # In the original paper, the authors used a length of 512.
-    MAX_LEN = 128
-
-    predictions = []
-    true_labels = []
-
-    # Pad our input tokens
-    input_ids = pad_sequences(
-        [tokenizer.convert_tokens_to_ids(txt) for txt in tokenized_texts],
-        maxlen=MAX_LEN, dtype="long", truncating="post", padding="post"
-    )
-
-    # Index Numbers and Padding
+    # Convert tokens to ids
     input_ids = [tokenizer.convert_tokens_to_ids(x) for x in tokenized_texts]
 
-    # pad sentences
-    input_ids = pad_sequences(input_ids, maxlen=MAX_LEN,
-                              dtype="long", truncating="post", padding="post")
+    # Set the maximum sequence length
+    MAX_LEN = 128
 
-    # Attention masks
+    # Pad sentences to MAX_LEN
+    input_ids = pad_sequences(input_ids, maxlen=MAX_LEN, dtype="long", truncating="post", padding="post")
+
     # Create attention masks
     attention_masks = []
 
@@ -66,28 +48,21 @@ def check_GE(sents):
 
     prediction_inputs = torch.tensor(input_ids)
     prediction_masks = torch.tensor(attention_masks)
-    prediction_labels = torch.tensor(labels)
 
     with torch.no_grad():
-        # Forward pass, calculate logit predictions
-        logits = modelGED(prediction_inputs, token_type_ids=None,
-                          attention_mask=prediction_masks)
+        logits = modelGED(prediction_inputs, token_type_ids=None, attention_mask=prediction_masks)
 
-    # Move logits and labels to CPU
+    # Move logits to CPU
     logits = logits.detach().cpu().numpy()
-    # label_ids = b_labels.to("cpu").numpy()
 
-    # Store predictions and true labels
+    # Store predictions
+    predictions = []
     predictions.append(logits)
-    # true_labels.append(label_ids)
 
-    #   print(predictions)
     flat_predictions = [item for sublist in predictions for item in sublist]
-    #   print(flat_predictions)
     prob_vals = flat_predictions
     flat_predictions = np.argmax(flat_predictions, axis=1).flatten()
-    # flat_true_labels = [item for sublist in true_labels for item in sublist]
-    #   print(flat_predictions)
+
     return flat_predictions, prob_vals
 
 
@@ -104,10 +79,8 @@ modelGED = BertForSequenceClassification.from_pretrained("bert-base-uncased", nu
 # restore model
 # TODO remove map_location param
 modelGED.load_state_dict(torch.load('bert-based-uncased-GED.pth', map_location=torch.device('cpu')))
-# modelGED.eval()
 
 model = BertForMaskedLM.from_pretrained('bert-large-uncased')
-# model.eval()
 
 tokenizerLarge = BertTokenizer.from_pretrained('bert-large-uncased')
 
@@ -132,9 +105,7 @@ helping_verbs = ['am', 'is', 'are', 'was', 'were', 'being', 'been', 'be',
 
 # Create a set of sentences which have possible corrected spellings
 def create_spelling_set(org_text):
-    sent = org_text
-    sent = sent.lower()
-    sent = sent.strip().split()
+    sent = org_text.lower().strip().split()
 
     nlp = en_core_web_sm.load()
     proc_sent = nlp.tokenizer.tokens_from_list(sent)
@@ -142,34 +113,33 @@ def create_spelling_set(org_text):
 
     sentences = []
 
-    for tok in proc_sent:
+    for token in proc_sent:
         # check for spelling for alphanumeric
-        if tok.text.isalpha() and not gb.spell(tok.text):
+        if token.text.isalpha() and not gb.spell(token.text):
             new_sent = sent[:]
             # append new sentences with possible corrections
-            for sugg in gb.suggest(tok.text):
-                new_sent[tok.i] = sugg
+            for sugg in gb.suggest(token.text):
+                new_sent[token.i] = sugg
                 sentences.append(" ".join(new_sent))
 
     spelling_sentences = sentences
 
-    # retain new sentences which have a
-    # minimum chance of correctness using BERT GED
+    # retain new sentences which have a minimum chance of correctness using BERT GED
     new_sentences = []
 
     for sent in spelling_sentences:
-        no_error, prob_val = check_GE([sent])
+        _, prob_val = check_GE([sent])
         exps = [np.exp(i) for i in prob_val[0]]
         sum_of_exps = sum(exps)
         softmax = [j / sum_of_exps for j in exps]
-        if (softmax[1] > 0.6):
+        if softmax[1] > 0.6:
             new_sentences.append(sent)
 
     # if no corrections, append the original sentence
     if len(spelling_sentences) == 0:
         spelling_sentences.append(" ".join(sent))
 
-    # eliminate dupllicates
+    # eliminate duplicates
     [spelling_sentences.append(sent) for sent in new_sentences]
     spelling_sentences = list(dict.fromkeys(spelling_sentences))
 
@@ -191,16 +161,15 @@ def create_grammar_set(spelling_sentences):
             del new_sent[i]
             text = " ".join(new_sent)
 
-            # retain new sentences which have a
-            # minimum chance of correctness using BERT GED
-            no_error, prob_val = check_GE([text])
+            _, prob_val = check_GE([text])
             exps = [np.exp(i) for i in prob_val[0]]
+            print(prob_val)
             sum_of_exps = sum(exps)
             softmax = [j / sum_of_exps for j in exps]
-            if (softmax[1] > 0.6):
+            if softmax[1] > 0.6:
                 new_sentences.append(text)
 
-    # eliminate dupllicates
+    # eliminate duplicates
     [spelling_sentences.append(sent) for sent in new_sentences]
     spelling_sentences = list(dict.fromkeys(spelling_sentences))
     return spelling_sentences
@@ -383,6 +352,7 @@ def ml_part(update, context):
     for i in range(len(input_sentences)):
         sentence_to_correct = input_sentences[i]
 
+        print('SENTENCE TO CORRECT: ' + sentence_to_correct)
         sentences = create_spelling_set(sentence_to_correct)
         spelling_sentences = create_grammar_set(sentences)
         sentences = create_mask_set(spelling_sentences)
@@ -404,7 +374,7 @@ def ml_part(update, context):
             corrected_text += sentence_to_correct + delimiters[i]
             continue
 
-        no_error, prob_val = check_GE(sentences)
+        _, prob_val = check_GE(sentences)
 
         best_match = None
         best_match_prob = 0.0
